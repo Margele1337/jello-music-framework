@@ -1,0 +1,44 @@
+Jello Music Framework NOTICE
+============================
+
+Jello Music Framework
+Copyright (c) 2026 Margele1337
+License: MIT (see LICENSE)
+
+This repository is the local-first framework edition of the author's Jello
+Music desktop application. It contains no online music API client, no account
+system, and no sidecar process. The player UI, Electron shell, playback queue,
+spectrum, desktop lyrics, tray integration, and settings are the author's
+original work.
+
+Third-party components
+----------------------
+- Electron: MIT
+- Vue: MIT
+- Vite: MIT
+- electron-builder: MIT
+- music-metadata: MIT (local audio tag and cover parsing)
+- Roboto (Sigma UI CSS font): SIL Open Font License 1.1
+- TeX Gyre Heros (Sigma text atlas, Helvetica clone matching the original
+  Helvetica Neue Light look): GUST Font License 1.0, full text at
+  src/assets/sigma/fonts/GUST-FONT-LICENSE.txt.
+- Selawik (former Sigma text atlas font, Segoe UI metric-compatible): SIL Open
+  Font License 1.1. Copyright 2011 Google Inc. See
+  src/assets/sigma/fonts/OFL.txt.
+- Feather icon geometry (settings page inline SVGs): MIT License
+  https://github.com/feathericons/feather
+- Other npm dependencies: used under their respective licenses; see
+  package-lock.json and the dependency packages for full texts.
+
+Sigma UI and branding
+---------------------
+The Sigma UI components, Sigma image assets, and the Jello/Sigma name and logo
+are the repository owner's original work, relicensed for this repository under
+MIT. They contain no third-party application code or proprietary game assets.
+
+Local media
+-----------
+The application does not ship music. It indexes audio files chosen by the user
+and serves them to the renderer through the `jello-local://` protocol. Audio
+files, embedded artwork, and sidecar `.lrc` files remain on the user's disk and
+under the user's own licenses.

@@ -1,40 +1,86 @@
 {
   "name": "jello-music-framework",
   "version": "0.1.0",
-  "description": "Clean, MIT-licensed desktop music playback framework built with Electron and Vue 3.",
-  "type": "module",
-  "main": "electron/main.cjs",
-  "author": "Margele1337",
+  "private": true,
+  "description": "Jello Music Framework - local-first, MIT desktop music player shell",
   "license": "MIT",
+  "type": "module",
+  "main": "electron/main.js",
+  "engines": {
+    "node": ">=20.19.0"
+  },
   "scripts": {
-    "dev": "vite",
+    "dev": "concurrently -k \"vite\" \"wait-on http://127.0.0.1:5173 && cross-env VITE_DEV_SERVER_URL=http://127.0.0.1:5173 electron .\"",
     "build": "vite build",
+    "lint": "eslint .",
     "start": "electron .",
+    "preview": "vite preview",
     "test": "node --test",
-    "dist": "npm run build && electron-builder --win --x64"
+    "predist": "node tools/clean-electron-default-app.cjs",
+    "dist": "npm run build && electron-builder --win --x64 --publish never"
   },
   "dependencies": {
-    "vue": "^3.5.44"
+    "@fontsource/jetbrains-mono": "^5.3.0",
+    "electron-store": "^12.0.0",
+    "electron-updater": "^6.8.12",
+    "koffi": "^3.3.4",
+    "music-metadata": "^12.3.4"
   },
   "devDependencies": {
+    "@eslint/js": "^10.0.1",
     "@vitejs/plugin-vue": "^6.0.10",
+    "concurrently": "^10.0.6",
+    "cross-env": "^10.1.0",
     "electron": "^45.0.0",
     "electron-builder": "^26.18.1",
-    "vite": "^8.3.5"
+    "eslint": "^10.14.0",
+    "eslint-plugin-vue": "^10.12.0",
+    "globals": "^17.13.0",
+    "pinia": "^3.0.4",
+    "vite": "^8.3.5",
+    "vue": "^3.5.44",
+    "vue-router": "^4.6.4",
+    "wait-on": "^9.5.1"
   },
+  "author": "Margele1337",
   "build": {
-    "appId": "cn.margele.jello.framework",
+    "appId": "cn.jello.music.framework",
     "productName": "Jello Music Framework",
+    "icon": "build/icon.ico",
+    "asarUnpack": [
+      "node_modules/koffi/**",
+      "node_modules/@koromix/**"
+    ],
+    "afterPack": "tools/verify-pack.cjs",
     "directories": {
       "output": "dist_electron"
     },
     "files": [
-      "electron/**/*",
       "dist/**/*",
-      "package.json"
+      "electron/**/*",
+      "shared/**/*",
+      "package.json",
+      "LICENSE",
+      "NOTICE"
     ],
     "win": {
-      "target": "nsis"
-    }
+      "target": [
+        "nsis"
+      ],
+      "artifactName": "Jello-Music-Framework-Setup-${version}.${ext}"
+    },
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "Margele1337",
+        "repo": "jello-music-framework"
+      }
+    ],
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "differentialPackage": false
+    },
+    "compression": "normal"
   }
 }

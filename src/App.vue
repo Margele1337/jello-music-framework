@@ -1,131 +1,418 @@
 <template>
-  <div class="app">
-    <aside class="sidebar">
-      <div class="brand">
-        <span class="brand-mark"></span>
-        <div>Jello<span>framework</span></div>
-      </div>
-
-      <nav class="nav">
-        <button :class="{ active: view === 'player' }" @click="view = 'player'">正在播放</button>
-        <button :class="{ active: view === 'library' }" @click="view = 'library'">媒体库</button>
-        <button :class="{ active: view === 'about' }" @click="view = 'about'">关于框架</button>
-      </nav>
-
-      <div class="side-foot">MIT License · v{{ version }}</div>
-    </aside>
-
-    <main class="main">
-      <section v-if="view === 'player'" class="view player-view">
-        <div class="cover">
-          <div class="disc"></div>
-        </div>
-
-        <div class="track-meta">
-          <p class="eyebrow">Now playing</p>
-          <h1>{{ current?.title ?? '选择一首曲目' }}</h1>
-          <p class="artist">{{ current?.artist ?? 'Demo source' }}</p>
-        </div>
-
-        <div class="progress" @click="onSeek">
-          <div class="progress-fill" :style="{ width: `${progress}%` }"></div>
-        </div>
-        <div class="time">
-          <span>{{ format(position) }}</span>
-          <span>{{ format(current?.duration ?? 0) }}</span>
-        </div>
-
-        <div class="controls">
-          <button @click="prev">上一首</button>
-          <button class="primary" @click="toggle">{{ playing ? '暂停' : '播放' }}</button>
-          <button @click="next">下一首</button>
-        </div>
-
-        <Spectrum :analyser="analyser" />
-
-        <div class="lyrics">
-          <p class="eyebrow">Lyrics</p>
-          <p v-for="(line, index) in current?.lyrics ?? []" :key="index">{{ line }}</p>
-        </div>
-      </section>
-
-      <section v-else-if="view === 'library'" class="view library-view">
-        <p class="eyebrow">Demo source</p>
-        <h1>媒体库</h1>
-        <p class="hint">
-          这些曲目由 DemoSource 在本地合成，不访问任何外部接口。
-          实现 MusicSource 即可替换成自己的数据源。
-        </p>
-
-        <ul class="track-list">
-          <li v-for="(track, index) in tracks" :key="track.id" :class="{ active: index === currentIndex }">
-            <button @click="select(index)">
-              <strong>{{ track.title }}</strong>
-              <span>{{ track.artist }} · {{ format(track.duration) }}</span>
-            </button>
-          </li>
-        </ul>
-      </section>
-
-      <section v-else class="view about-view">
-        <p class="eyebrow">Framework</p>
-        <h1>Jello Music Framework</h1>
-        <p class="hint">
-          一个干净、MIT 开源的桌面音乐播放框架。播放层、歌词、频谱和窗口安全边界已经准备好，
-          数据源通过适配器接入。
-        </p>
-
-        <ul class="bullets">
-          <li>Electron + Vue 3 + Vite，主进程与渲染进程严格隔离</li>
-          <li>MusicSource 适配器接口；内置 DemoSource 使用本地合成音频</li>
-          <li>不内置、不代理、不分发任何音乐内容或第三方接口</li>
-          <li>MIT License，可自由用于自己的播放器项目</li>
-        </ul>
-
-        <p class="hint">
-          架构说明见 docs/ARCHITECTURE.md；适配器契约见 src/sources/MusicSource.js。
-        </p>
-      </section>
-    </main>
+  <div class="app-root">
+    <!-- 播放器常驻挂载（旧版结构：设置/登录/歌词是叠在上面的浮层，切页不卸载播放器）。
+         桌面歌词/频谱 HUD 窗口走各自的独立路由，不挂播放器。 -->
+    <SigmaView v-if="showPlayerBase" class="app-base" />
+    <RouterView v-slot="{ Component }">
+      <Transition name="view-fade">
+        <component :is="Component" v-if="route.path !== '/'" :key="route.fullPath"
+          :class="isOverlayRoute ? 'app-overlay' : null" />
+      </Transition>
+    </RouterView>
   </div>
 </template>
 
 <script setup>
-import { computed, ref } from 'vue';
-import Spectrum from './components/Spectrum.vue';
-import { usePlayer } from './composables/usePlayer.js';
+import { onBeforeUnmount, onMounted, computed, watch } from 'vue';
+import { useRoute, useRouter } from 'vue-router';
+import SigmaView from './views/SigmaView.vue';
+import defaultArtwork from './assets/sigma/music/artwork.png';
+import { getLyrics, toggleSongLiked } from './services/source/localLibrary.js';
+import {
+  applyMediaMetadata,
+  applyPlaybackState,
+  applyPositionState,
+  clearPositionState,
+  initMediaSession,
+  teardownMediaSession
+} from './services/audio/mediaSession.js';
+import { refreshSpectrum, startSpectrum, stopSpectrum, updateSpectrumSettings } from './services/audio/spectrum.js';
+import { usePlayerStore } from './stores/player.js';
+import { useSettingsStore } from './stores/settings.js';
 
-const {
-  tracks,
-  current,
-  currentIndex,
-  playing,
-  position,
-  progress,
-  analyser,
-  select,
-  toggle,
-  next,
-  prev,
-  seek
-} = usePlayer();
+const settings = useSettingsStore();
+const player = usePlayerStore();
+const route = useRoute();
+const router = useRouter();
 
-const view = ref('player');
-const version = '0.1.0';
+// HUD 窗口（桌面歌词/频谱）走独立路由，不挂播放器基座
+const isHudRoute = computed(() => ['/desktop-lyrics', '/spectrum'].includes(route.path));
+const showPlayerBase = computed(() => !isHudRoute.value);
+// 设置/歌词是叠在播放器上的全窗口浮层
+const isOverlayRoute = computed(() => ['/settings', '/lyrics'].includes(route.path));
 
-function format(value) {
-  const total = Math.max(0, Math.round(Number(value) || 0));
-  const minutes = Math.floor(total / 60);
-  const seconds = String(total % 60).padStart(2, '0');
-  return `${minutes}:${seconds}`;
-}
+// ===== 收起/弹出时的视图回切（1:1 对齐旧版 SigmaUI.onSigmaDockChanged）=====
+// 收起：若停留在设置页，300ms 后带 0.3s 淡出切回播放器（40px 条显示的是播放器右缘）；
+// 弹出：若还有待切的收起计时，瞬时切回播放器（无过渡），看到的直接是面板自己的滑出动画
+let dockSwitchTimer = null;
+let unsubscribeDockForView = null;
+let unsubscribeNavigate = null;
 
-function onSeek(event) {
-  if (!current.value) {
+const NAVIGABLE_PATHS = ['/', '/settings', '/lyrics'];
+
+const goPlayerView = (instant) => {
+  if (route.path === '/') return;
+  // 播放器常驻，浮层淡出即完成切换，无需跳过过渡
+  void instant;
+  router.push('/');
+};
+
+const onDockChangedForView = (docked) => {
+  if (docked) {
+    if (route.path === '/' || dockSwitchTimer) return;
+    dockSwitchTimer = setTimeout(() => {
+      dockSwitchTimer = null;
+      goPlayerView(false);
+    }, 300);
     return;
   }
-  const rect = event.currentTarget.getBoundingClientRect();
-  const ratio = Math.min(1, Math.max(0, (event.clientX - rect.left) / rect.width));
-  seek(ratio * current.value.duration);
+  if (dockSwitchTimer) {
+    clearTimeout(dockSwitchTimer);
+    dockSwitchTimer = null;
+    goPlayerView(true);
+  }
+};
+
+let desktopLyricToken = 0;
+let desktopLyricTimer = null;
+
+const sendDesktopLyricsLyrics = (payload) => {
+  window.jello?.desktopLyrics?.update?.(payload);
+};
+
+const sendDesktopLyricsProgress = (force = false) => {
+  if (!settings.desktopLyrics) return;
+  const audio = player.audio;
+  const time = Number.isFinite(audio?.currentTime) ? audio.currentTime + 0.15 : 0;
+  window.jello?.desktopLyrics?.progress?.({ time, playing: !!player.playing, force });
+};
+
+const loadDesktopLyrics = async () => {
+  const token = ++desktopLyricToken;
+
+  if (!player.currentSong || !settings.desktopLyrics) {
+    sendDesktopLyricsLyrics({ hash: '', title: '', artist: '', lines: [] });
+    return;
+  }
+
+  const song = player.currentSong;
+  try {
+    const { lines } = await getLyrics(song);
+    if (token !== desktopLyricToken || !settings.desktopLyrics) return;
+    sendDesktopLyricsLyrics({
+      hash: song.hash || '',
+      title: song.name || '',
+      artist: song.author || '',
+      lines: lines.map((line) => ({
+        characters: [[line.text, line.time * 1000, (line.time + 4) * 1000]],
+        translated: ''
+      }))
+    });
+  } catch {
+    if (token !== desktopLyricToken) return;
+    sendDesktopLyricsLyrics({ hash: song.hash || '', title: song.name || '', artist: song.author || '', lines: [] });
+  }
+  sendDesktopLyricsProgress(true);
+};
+
+const startDesktopLyrics = () => {
+  if (desktopLyricTimer) return;
+  desktopLyricTimer = setInterval(() => sendDesktopLyricsProgress(), 250);
+};
+
+const stopDesktopLyrics = () => {
+  if (desktopLyricTimer) clearInterval(desktopLyricTimer);
+  desktopLyricTimer = null;
+};
+
+watch(() => settings.desktopLyrics, (enabled) => {
+  if (enabled) {
+    void loadDesktopLyrics();
+    startDesktopLyrics();
+  } else {
+    desktopLyricToken += 1;
+    stopDesktopLyrics();
+  }
+});
+let unsubscribeSettings = null;
+let unsubscribePlayer = null;
+let unsubscribeSpectrumRequest = null;
+
+watch(() => player.currentSong?.hash, () => {
+  if (settings.desktopLyrics) void loadDesktopLyrics();
+});
+
+watch(() => player.playing, () => {
+  if (settings.desktopLyrics) sendDesktopLyricsProgress(true);
+});
+
+const sendSpectrum = (payload) => window.jello?.spectrum?.update?.(payload);
+
+const showToast = (message) => {
+  window.dispatchEvent(new CustomEvent('jello:toast', { detail: message }));
+};
+
+let lastVolumeBeforeMute = 0;
+
+const handlePlayerCommand = (command) => {
+  if (command === 'toggle') player.togglePlayPause();
+  else if (command === 'pause') player.pause();
+  else if (command === 'previous') player.playPrevious();
+  else if (command === 'next') player.playNext();
+  else if (command === 'volume-up') player.changeVolume(5);
+  else if (command === 'volume-down') player.changeVolume(-5);
+  else if (command === 'toggle-mute') {
+    if (player.volume > 0) {
+      lastVolumeBeforeMute = player.volume;
+      player.setVolumePercent(0);
+    } else {
+      player.setVolumePercent(lastVolumeBeforeMute || 50);
+    }
+  } else if (command === 'toggle-mode') {
+    player.togglePlaybackMode();
+  } else if (command === 'like') {
+    toggleSongLiked(player.currentSong)
+      .then((liked) => showToast(liked ? '已添加到「我喜欢」' : '已从「我喜欢」移除'))
+      .catch((error) => showToast(error?.message || '收藏失败'));
+  }
+};
+
+const syncSpectrum = () => {
+  if (settings.spectrum) {
+    if (player.audio.crossOrigin !== 'anonymous') {
+      player.audio.crossOrigin = 'anonymous';
+      player.reloadCurrent();
+    }
+    void startSpectrum(player.audio, {
+      getSong: () => player.currentSong,
+      isPlaying: () => player.playing,
+      // 频谱图内增益跟随「主界面音量 × 应用音量」，与元素路径同口径
+      getVolume: () => player.effectiveVolume,
+      getMuted: () => false,
+      send: sendSpectrum
+    });
+  } else {
+    stopSpectrum(sendSpectrum);
+  }
+};
+
+// immediate：保存值为开的用户启动即装配频谱（旧实现漏了启动调用，producer
+// 从未启动——频谱全透明、直到手动关/开一次开关才恢复）
+watch(() => settings.spectrum, syncSpectrum, { immediate: true });
+// 频谱预设只影响之后的自解码准备（下一首生效），即时同步到分析管线即可
+watch(() => settings.spectrumPreset, (preset) => {
+  updateSpectrumSettings({ spectrumPreset: preset });
+}, { immediate: true });
+watch(() => player.currentSong?.hash, () => {
+  if (settings.spectrum) refreshSpectrum();
+});
+watch(() => player.playing, () => {
+  if (settings.spectrum) refreshSpectrum();
+});
+
+watch(() => settings.playbackRate, (rate) => {
+  player.setPlaybackRate(Number(rate) || 1);
+  syncMediaPosition();
+});
+
+// 设置页「应用音量」（音量合成器式二级音量）变化即重放当前音量
+watch(() => settings.masterVolume, () => {
+  player.applyMasterVolume();
+});
+watch(() => settings.loudnessNormalization, (enabled) => {
+  player.applyLoudnessSetting(enabled);
+});
+watch(() => settings.audioOutputDevice, (deviceId) => {
+  player.applyOutputDevice(deviceId);
+});
+
+// ===== MediaSession / Windows SMTC（系统媒体浮层的元数据、时间轴与媒体键）=====
+let mediaPositionTimer = null;
+
+const currentDurationSeconds = () => {
+  const audio = player.audio;
+  if (Number.isFinite(audio?.duration) && audio.duration > 0) return audio.duration;
+  // 元数据未就绪时用歌曲自带时长兜底（timeLength 为毫秒）
+  const length = Number(player.currentSong?.timeLength);
+  return Number.isFinite(length) && length > 0 ? length / 1000 : 0;
+};
+
+const syncMediaPosition = () => {
+  applyPositionState({
+    currentTime: Number(player.audio?.currentTime) || 0,
+    duration: currentDurationSeconds(),
+    playbackRate: Number(settings.playbackRate) || 1
+  });
+};
+
+const stopMediaPositionTimer = () => {
+  if (mediaPositionTimer) clearInterval(mediaPositionTimer);
+  mediaPositionTimer = null;
+};
+
+const startMediaPositionTimer = () => {
+  stopMediaPositionTimer();
+  syncMediaPosition();
+  // SMTC 时间轴需要周期上报，否则系统浮层进度停在最后一次位置
+  mediaPositionTimer = setInterval(syncMediaPosition, 1000);
+};
+
+// SMTC 相关 watch 只在主面板窗口注册（HUD 窗口没有真实播放，避免抢占系统媒体会话）
+if (!isHudRoute.value) {
+  watch(() => player.currentSong?.hash, () => {
+    void applyMediaMetadata(player.currentSong, defaultArtwork);
+    if (player.currentSong) syncMediaPosition();
+    else clearPositionState();
+  });
+
+  watch(() => player.playing, (playing) => {
+    applyPlaybackState(playing);
+    if (playing) {
+      startMediaPositionTimer();
+    } else {
+      stopMediaPositionTimer();
+      syncMediaPosition();
+    }
+  });
 }
+
+const isInteractive = (target) => (
+  ['INPUT', 'TEXTAREA', 'SELECT', 'BUTTON', 'A'].includes(target?.tagName)
+  || target?.isContentEditable
+);
+
+const onKeyDown = (event) => {
+  if (event.defaultPrevented || event.ctrlKey || event.metaKey || event.altKey) return;
+  if (isInteractive(event.target)) return;
+
+  switch (event.code) {
+    case 'Space':
+      event.preventDefault();
+      player.togglePlayPause();
+      break;
+    case 'ArrowLeft':
+      event.preventDefault();
+      player.seekBy(-5);
+      break;
+    case 'ArrowRight':
+      event.preventDefault();
+      player.seekBy(5);
+      break;
+    case 'ArrowUp':
+      event.preventDefault();
+      player.changeVolume(5);
+      break;
+    case 'ArrowDown':
+      event.preventDefault();
+      player.changeVolume(-5);
+      break;
+    default:
+      break;
+  }
+};
+
+onMounted(async () => {
+  window.addEventListener('keydown', onKeyDown);
+  // 启动意图/MediaSession 只属于主面板窗口：HUD 窗口（桌面歌词/频谱）
+  // 跑同一个 App.vue，但那里没有真实播放，注册会抢走系统媒体键
+  if (!isHudRoute.value) {
+    const launchIntent = await window.jello?.app?.consumeLaunchIntent?.();
+    if (launchIntent?.openSettings) void router.push('/settings');
+
+    initMediaSession({
+      play: () => {
+        if (!player.playing) player.togglePlayPause();
+      },
+      pause: () => player.pause(),
+      previous: () => player.playPrevious(),
+      next: () => player.playNext(),
+      seekRelative: (delta) => player.seekBy(delta),
+      seekTo: (time) => {
+        const audio = player.audio;
+        if (!Number.isFinite(audio?.duration)) return;
+        audio.currentTime = Math.max(0, Math.min(audio.duration, Number(time) || 0));
+        syncMediaPosition();
+      }
+    });
+    void applyMediaMetadata(player.currentSong, defaultArtwork);
+    applyPlaybackState(player.playing);
+    if (player.playing) startMediaPositionTimer();
+  }
+
+  await settings.load();
+  unsubscribeSettings = window.jello?.settings?.onChange?.((next) => settings.apply(next)) || null;
+  unsubscribeDockForView = window.jello?.windowControl?.onDockChanged?.(onDockChangedForView) || null;
+  unsubscribeNavigate = window.jello?.ui?.onNavigate?.((payload) => {
+    // 托盘菜单「设置」等入口：主进程要求主窗口导航到指定路由
+    const path = String(payload?.path || '');
+    console.info('[ui] 收到导航请求:', path, '允许=', NAVIGABLE_PATHS.includes(path), '当前=', route.path);
+    if (NAVIGABLE_PATHS.includes(path)) router.push(path);
+  }) || null;
+  unsubscribePlayer = window.jello?.player?.onCommand?.((command) => {
+    handlePlayerCommand(command);
+  }) || null;
+  unsubscribeSpectrumRequest = window.jello?.spectrum?.onRequestCurrent?.(() => {
+    if (settings.spectrum) refreshSpectrum();
+  }) || null;
+  if (settings.desktopLyrics) {
+    void loadDesktopLyrics();
+    startDesktopLyrics();
+  }
+  if (Number.isFinite(Number(settings.playbackRate)) && Number(settings.playbackRate) !== 1) {
+    player.setPlaybackRate(Number(settings.playbackRate));
+  }
+  if (settings.audioOutputDevice && settings.audioOutputDevice !== 'default') {
+    player.applyOutputDevice(settings.audioOutputDevice);
+  }
+});
+
+onBeforeUnmount(() => {
+  window.removeEventListener('keydown', onKeyDown);
+  stopDesktopLyrics();
+  stopSpectrum(sendSpectrum);
+  stopMediaPositionTimer();
+  teardownMediaSession();
+  unsubscribeSettings?.();
+  unsubscribePlayer?.();
+  unsubscribeSpectrumRequest?.();
+  unsubscribeDockForView?.();
+  unsubscribeNavigate?.();
+  unsubscribeDockForView = null;
+  unsubscribeNavigate = null;
+  if (dockSwitchTimer) {
+    clearTimeout(dockSwitchTimer);
+    dockSwitchTimer = null;
+  }
+});
 </script>
+
+<style>
+/* 视图过渡（对齐旧版 sigma-view-fade）：浮层离开 0.3s 淡出，露出常驻播放器（进入无过渡） */
+.view-fade-leave-active {
+  transition: opacity 0.3s ease;
+  pointer-events: none;
+}
+
+.view-fade-leave-to {
+  opacity: 0;
+}
+</style>
+
+<style scoped>
+.app-root {
+  position: relative;
+  width: 100%;
+  height: 100%;
+}
+
+.app-base {
+  position: absolute;
+  inset: 0;
+}
+
+.app-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 100;
+}
+</style>

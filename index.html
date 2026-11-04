@@ -1,10 +1,14 @@
 <!DOCTYPE html>
 <html lang="zh-CN">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta http-equiv="Content-Security-Policy"
-        content="default-src 'self'; img-src 'self' data:; media-src 'self' blob:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self' ws://127.0.0.1:* ws://localhost:* http://127.0.0.1:* http://localhost:*">
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <!-- CSP 是占位内容：vite.config.js 的 cspPlugin 会在 dev/build 两个阶段用
+       shared/csp.js 的 buildCsp 重写（媒体/封面全部走 jello-local 自定义协议）。 -->
+  <meta
+    http-equiv="Content-Security-Policy"
+    content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: jello-local:; media-src blob: jello-local:; connect-src 'self' jello-local:; worker-src 'self' blob:"
+  />
   <title>Jello Music Framework</title>
 </head>
 <body>
